@@ -1,63 +1,54 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
-from typing import List
-import uuid
+from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+import pdfplumber
+from docx import Document
 
-app = FastAPI(title="Resume Builder API")
+app = FastAPI()
 
-DB = {}
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
-class Experience(BaseModel):
-    company: str
-    role: str
-    duration: str
-    details: str
+def extract_pdf(file_path):
+    text = ""
+    with pdfplumber.open(file_path) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() + "\n"
+    return text
 
-class Education(BaseModel):
-    degree: str
-    year: str
-    college: str
+def extract_docx(file_path):
+    doc = Document(file_path)
+    text = "\n".join([para.text for para in doc.paragraphs])
+    return text
 
-class Resume(BaseModel):
-    personal: dict
-    summary: str
-    skills: List[str]
-    experience: List[Experience]
-    education: List[Education]
-    theme: str = "modern"
+@app.post("/upload_resume")
+async def upload_resume(file: UploadFile = File(...)):
+    content = await file.read()
+    file_path = f"temp_{file.filename}"
+    with open(file_path, "wb") as f:
+        f.write(content)
+    
+    if file.filename.endswith(".pdf"):
+        text = extract_pdf(file_path)
+    elif file.filename.endswith(".docx"):
+        text = extract_docx(file_path)
+    else:
+        return {"error": "Unsupported file type"}
 
-@app.post("/api/resumes")
-def create_resume(resume: Resume):
-    resume_id = str(uuid.uuid4())[:8]
-    DB[resume_id] = resume
-    return {"resume_id": resume_id, "message": "Resume created"}
+    # Simple parsing logic (can improve later)
+    lines = text.split("\n")
+    resume_json = {
+        "name": lines[0] if lines else "",
+        "title": lines[1] if len(lines) > 1 else "",
+        "contact": {"Email": "", "Phone": ""},
+        "skills": [],
+        "experience": [],
+        "education": []
+    }
 
-@app.get("/api/resumes/{resume_id}")
-def get_resume(resume_id: str):
-    if resume_id not in DB:
-        raise HTTPException(404, "Resume not found")
-    return DB[resume_id]
+    # You can add NLP later to detect sections automatically
 
-@app.get("/api/resumes/{resume_id}/html", response_class=HTMLResponse)
-def render_resume(resume_id: str):
-    if resume_id not in DB:
-        raise HTTPException(404, "Resume not found")
-
-    r = DB[resume_id]
-    html = f"""
-    <html>
-      <body style="font-family:Arial">
-        <h1>{r.personal['name']}</h1>
-        <h3>{r.personal['title']}</h3>
-        <p>{r.summary}</p>
-        <h4>Skills</h4>
-        <ul>{"".join(f"<li>{s}</li>" for s in r.skills)}</ul>
-      </body>
-    </html>
-    """
-    return html
-
-@app.get("/api/themes")
-def themes():
-    return ["modern", "classic", "minimal", "dark"]
+    return {"text": text, "parsed_resume": resume_json}
