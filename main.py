@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import pdfplumber
 from docx import Document
@@ -12,6 +12,32 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+@app.post("/upload_resume")
+async def upload_resume(file: UploadFile = File(...)):
+    content = await file.read()
+    temp_path = f"temp_{file.filename}"
+    with open(temp_path, "wb") as f:
+        f.write(content)
+
+    if file.filename.endswith(".pdf"):
+        text = extract_pdf(temp_path)
+    elif file.filename.endswith(".docx"):
+        text = extract_docx(temp_path)
+    else:
+        return {"error": "Unsupported file type"}
+
+    lines = text.split("\n")
+    parsed = {
+        "name": lines[0] if lines else "",
+        "title": lines[1] if len(lines) > 1 else "",
+        "contact": {},
+        "skills": [],
+        "experience": [],
+        "education": []
+    }
+
+    return {"text": text, "parsed_resume": parsed}
+
 def extract_pdf(file_path):
     text = ""
     with pdfplumber.open(file_path) as pdf:
@@ -21,34 +47,4 @@ def extract_pdf(file_path):
 
 def extract_docx(file_path):
     doc = Document(file_path)
-    text = "\n".join([para.text for para in doc.paragraphs])
-    return text
-
-@app.post("/upload_resume")
-async def upload_resume(file: UploadFile = File(...)):
-    content = await file.read()
-    file_path = f"temp_{file.filename}"
-    with open(file_path, "wb") as f:
-        f.write(content)
-    
-    if file.filename.endswith(".pdf"):
-        text = extract_pdf(file_path)
-    elif file.filename.endswith(".docx"):
-        text = extract_docx(file_path)
-    else:
-        return {"error": "Unsupported file type"}
-
-    # Simple parsing logic (can improve later)
-    lines = text.split("\n")
-    resume_json = {
-        "name": lines[0] if lines else "",
-        "title": lines[1] if len(lines) > 1 else "",
-        "contact": {"Email": "", "Phone": ""},
-        "skills": [],
-        "experience": [],
-        "education": []
-    }
-
-    # You can add NLP later to detect sections automatically
-
-    return {"text": text, "parsed_resume": resume_json}
+    return "\n".join([p.text for p in doc.paragraphs])
